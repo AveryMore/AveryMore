@@ -12,7 +12,7 @@ AIE_OUTPUT="$AIE_PROJECT/apps/macos/AIEPopup/build/releases"
 mkdir -p "$AIE_OUTPUT"
 AIE_STAGE="$(mktemp -d "$AIE_OUTPUT/.preview.XXXXXX")"
 trap 'rm -rf "$AIE_STAGE"' EXIT
-ditto --noextattr --norsrc "$AIE_APP" "$AIE_STAGE/AI Everything.app"
+cp -cR "$AIE_APP" "$AIE_STAGE/AI Everything.app"
 codesign --verify --deep --strict "$AIE_STAGE/AI Everything.app"
 ln -s /Applications "$AIE_STAGE/Applications"
 AIE_DMG="$AIE_OUTPUT/AI-Everything-$AIE_RELEASE-$AIE_ARCH_VALUE.dmg"

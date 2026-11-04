@@ -64,6 +64,22 @@ cp "$ROOT/Resources/OnboardingDemo-"*.mp4 "$ROOT/Resources/OnboardingDemo-"*.png
 cp "$PROJECT/tools/setup_local_quickscan.sh" "$APP/Contents/Resources/"
 cp "$PROJECT/tools/setup_local_semantic.sh" "$APP/Contents/Resources/"
 cp "$PROJECT/tools/pull_local_model.py" "$APP/Contents/Resources/"
+cp "$PROJECT/LICENSE" "$APP/Contents/Resources/AveryMore-LICENSE.txt"
+python3 - "$APP" <<'PYTHON'
+from pathlib import Path
+import sys
+app = Path(sys.argv[1])
+removed = 0
+for bytecode in app.rglob("*.pyc"):
+    module = bytecode.name.split(".cpython-")[0] + ".py"
+    if bytecode.parent.name == "__pycache__" and (bytecode.parent.parent / module).is_file():
+        removed += bytecode.stat().st_size
+        bytecode.unlink()
+for directory in sorted(app.rglob("__pycache__"), reverse=True):
+    if not any(directory.iterdir()):
+        directory.rmdir()
+print(f"Removed regenerable Python bytecode: {removed} bytes")
+PYTHON
 if [ -n "${AIE_SIGN_IDENTITY:-}" ]; then
   while IFS= read -r -d '' FILE; do
     codesign --force --options runtime --timestamp --sign "$AIE_SIGN_IDENTITY" "$FILE"
