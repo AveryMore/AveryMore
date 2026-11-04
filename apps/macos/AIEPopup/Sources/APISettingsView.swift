@@ -46,6 +46,14 @@ struct APISettingsView: View {
     @State private var showUnderstandingFailures = false
     @State private var understandingSkipError: String?
     @State private var showQuality = false
+    @State private var showHistoricalIndex = false
+    @State private var historicalIndex: (
+        folderCount: Int,
+        folders: [(name: String, path: String, fileCount: Int, vectorBytes: Int64, textBytes: Int64, indexBytes: Int64)],
+        totalIndexBytes: Int64,
+        byteScope: String
+    )?
+    @State private var historicalIndexError: String?
     @AppStorage("aie.search.automaticRerank") private var automaticRerank = true
     @AppStorage("aie.search.cloudJev") private var cloudJev = false
     @State private var models: [APIConfiguration.Model: String] = Dictionary(
@@ -91,6 +99,7 @@ struct APISettingsView: View {
             }
             .font(.system(size: 13))
             .padding(18)
+            .background(SettingsScrollStyle().allowsHitTesting(false))
         }
         .frame(width: 410)
         .frame(maxHeight: 520)
@@ -165,6 +174,94 @@ struct APISettingsView: View {
                 Toggle("改用云端 Jev（需 Key，会发送查询及候选内容）", isOn: $cloudJev)
                     .font(.system(size: 11))
             }
+
+            historicalIndexSection
+        }
+    }
+
+    private var historicalIndexSection: some View {
+        settingsCard {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) { showHistoricalIndex.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Text("历史索引").fontWeight(.semibold)
+                    Spacer()
+                    Text(historicalIndexSummary)
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Image(systemName: showHistoricalIndex ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showHistoricalIndex ? "已展开" : "已折叠")
+
+            if showHistoricalIndex {
+                if let historicalIndex {
+                    if historicalIndex.folders.isEmpty {
+                        Text("暂无历史索引")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(historicalIndex.folders, id: \.path) { folder in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(folder.name)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                                .help(folder.path)
+                            Text("\(folder.fileCount)个文件 · \(historicalIndexSize(folder.indexBytes))")
+                                .font(.system(size: 11))
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text("容量仅含保留的正文和向量，不代表实际磁盘占用。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(historicalIndexError ?? "正在读取历史索引…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task { await loadHistoricalIndex() }
+    }
+
+    private var historicalIndexSummary: String {
+        guard let historicalIndex else {
+            return historicalIndexError == nil ? "读取中…" : "读取失败"
+        }
+        return "\(historicalIndex.folderCount)个文件夹 · \(historicalIndexSize(historicalIndex.totalIndexBytes))"
+    }
+
+    private func historicalIndexSize(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "0 MB" }
+        if bytes < 100_000 { return "不足0.1 MB" }
+        let gigabytes = bytes >= 1_000_000_000
+        let value = Double(bytes) / (gigabytes ? 1_000_000_000 : 1_000_000)
+        return "约\(value.formatted(.number.precision(.fractionLength(0...1)))) \(gigabytes ? "GB" : "MB")"
+    }
+
+    @MainActor private func loadHistoricalIndex() async {
+        historicalIndexError = nil
+        let path = AppDatabase.url.path
+        do {
+            let snapshot = try await Task.detached(priority: .utility) {
+                let database = try ContentStore(path: path, readOnly: true)
+                return try database.historicalIndexStatistics()
+            }.value
+            guard !Task.isCancelled else { return }
+            historicalIndex = snapshot
+        } catch {
+            guard !Task.isCancelled else { return }
+            historicalIndex = nil
+            historicalIndexError = "历史索引暂时无法读取"
         }
     }
 
@@ -578,8 +675,12 @@ struct APISettingsView: View {
                  : "Gemma 向量目标：已完成 \(counts(.semantic).ready)，待完成 \(counts(.semantic).pending)，失败 \(counts(.semantic).failed)。此计数不是 8B 文件分析进度。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-            Button("检查语义索引") { model.updateSemanticIndex(force: true) }
-                .buttonStyle(.borderless)
+            Button(semantic.isIndexing ? "检查中…" : "检查并补齐") {
+                model.updateSemanticIndex(force: true)
+            }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(semantic.isIndexing)
         }
     }
 
@@ -1043,5 +1144,23 @@ struct APISettingsView: View {
         }
         if contentIssueCount > 0 { return "摘要正常 · \(contentIssueCount) 个文件覆盖有限" }
         return "摘要和内容覆盖均正常"
+    }
+}
+
+private struct SettingsScrollStyle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ScrollAnchor() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class ScrollAnchor: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let scroll = self?.enclosingScrollView else { return }
+                scroll.scrollerStyle = .overlay
+                scroll.autohidesScrollers = true
+                scroll.verticalScroller?.controlSize = .small
+            }
+        }
     }
 }

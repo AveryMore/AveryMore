@@ -820,13 +820,18 @@ public final class ContentStore: @unchecked Sendable {
         }
     }
 
-    /// Derived search data is current-only. Version, analysis, trash and artifact records remain.
+    /// Derived search data is current-only in active roots; inactive roots retain their history.
+    /// Version, analysis, trash and artifact records remain.
     /// Existing delete triggers remove the matching FTS, content units and vectors atomically.
     private static func retireInactiveSearchChunks(db: Database) throws {
         try db.execute(sql: """
             DELETE FROM chunks WHERE version_id NOT IN (
                 SELECT f.current_version_id FROM files f JOIN roots r ON r.id=f.root_id
                 WHERE f.present=1 AND r.active=1 AND f.current_version_id IS NOT NULL
+            ) AND NOT EXISTS (
+                SELECT 1 FROM file_versions v JOIN files f ON f.id=v.file_id
+                JOIN roots r ON r.id=f.root_id
+                WHERE v.id=chunks.version_id AND r.active=0
             )
             """)
     }
@@ -1235,15 +1240,18 @@ public final class ContentStore: @unchecked Sendable {
     }
 
     /// Metadata only: no filesystem enumeration, parsing or projection updates.
-    public func indexedFileMetadata(rootPaths: [String]) throws -> [IndexedFileMetadata] {
+    public func indexedFileMetadata(rootPaths: [String], includeInactiveRoots: Bool = false) throws -> [IndexedFileMetadata] {
         guard !rootPaths.isEmpty else { return [] }
-        let (whereSQL, args) = authorization(rootPaths)
+        let ids = rootPaths.map(ContentIdentity.root)
+        let visibility = includeInactiveRoots ? "(r.active=0 OR (f.present=1 AND r.active=1))" : "f.present=1 AND r.active=1"
+        let whereSQL = visibility + " AND f.root_id IN (" + ids.map { _ in "?" }.joined(separator: ",") + ")"
+        let args = StatementArguments(ids)
         return try database.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT f.id,f.path,f.relative_path,r.path AS root_path,f.kind,f.ext,f.size,f.modified_at,
                        v.id AS version_id,v.content_hash
                 FROM files f JOIN roots r ON r.id=f.root_id
-                JOIN file_versions v ON v.id=f.current_version_id
+                JOIN file_versions v ON v.id=f.current_version_id AND v.file_id=f.id
                 WHERE \(whereSQL) ORDER BY f.path
                 """, arguments: args).map { row in
                     IndexedFileMetadata(fileID: row["id"], versionID: row["version_id"],
@@ -1916,6 +1924,58 @@ public final class ContentStore: @unchecked Sendable {
                                       semantics: count("semantic_records"),
                                       embeddings: Int.fetchOne(db, sql: "SELECT count(*) FROM features WHERE feature_type='text_embedding'") ?? 0,
                                       failedStages: Int.fetchOne(db, sql: "SELECT count(*) FROM scan_jobs j JOIN files f ON f.current_version_id=j.version_id JOIN roots r ON r.id=f.root_id WHERE f.present=1 AND r.active=1 AND j.status='failed'") ?? 0)
+        }
+    }
+
+    /// Counts distinct file IDs with retained chunks in inactive roots, across all stored versions.
+    /// Bytes are payload only, not the folder's physical share of the SQLite database.
+    public func historicalIndexStatistics() throws -> (
+        folderCount: Int,
+        folders: [(name: String, path: String, fileCount: Int, vectorBytes: Int64, textBytes: Int64, indexBytes: Int64)],
+        totalIndexBytes: Int64,
+        byteScope: String
+    ) {
+        try database.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                WITH retained_chunks AS (
+                    SELECT r.id AS root_id,f.id AS file_id,c.id AS chunk_id,c.text
+                    FROM roots r JOIN files f ON f.root_id=r.id
+                    JOIN file_versions v ON v.file_id=f.id
+                    JOIN chunks c ON c.version_id=v.id
+                    WHERE r.active=0
+                ),
+                chunk_usage AS (
+                    SELECT root_id,count(DISTINCT file_id) AS file_count,
+                           sum(length(CAST(text AS BLOB))) AS text_bytes
+                    FROM retained_chunks GROUP BY root_id
+                ),
+                vector_usage AS (
+                    SELECT c.root_id,sum(length(x.vector_blob)) AS vector_bytes
+                    FROM retained_chunks c
+                    JOIN features x ON x.subject_type='content_unit' AND x.subject_id=c.chunk_id
+                    WHERE x.feature_type IN ('text_embedding','visual_embedding')
+                      AND x.model_key LIKE 'gemma2:%' AND x.vector_blob IS NOT NULL
+                    GROUP BY c.root_id
+                )
+                SELECT r.path,c.file_count,c.text_bytes,coalesce(v.vector_bytes,0) AS vector_bytes
+                FROM roots r JOIN chunk_usage c ON c.root_id=r.id
+                LEFT JOIN vector_usage v ON v.root_id=r.id
+                ORDER BY r.path
+                """)
+            let folders = rows.map { row in
+                let path: String = row["path"]
+                let vectorBytes: Int64 = row["vector_bytes"]
+                let textBytes: Int64 = row["text_bytes"]
+                return (name: URL(fileURLWithPath: path).lastPathComponent, path: path,
+                        fileCount: row["file_count"] as Int, vectorBytes: vectorBytes,
+                        textBytes: textBytes, indexBytes: vectorBytes + textBytes)
+            }
+            return (
+                folderCount: folders.count, folders: folders,
+                totalIndexBytes: folders.reduce(Int64.zero) { $0 + $1.indexBytes },
+                byteScope: "Stored chunks.text and Gemma (gemma2:*) text/visual/DeepScan vector BLOB payloads only; "
+                    + "excludes other text copies, SQLite pages, FTS internals, WAL and 8B analysis records/fields."
+            )
         }
     }
 

@@ -8,7 +8,7 @@ struct LaunchAtLoginToggle: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle("登录 Mac 时打开 AI Everything", isOn: Binding(
+            Toggle("登录 Mac 时打开 Averymore", isOn: Binding(
                 get: { status == .enabled || status == .requiresApproval },
                 set: { enabled in
                     do {

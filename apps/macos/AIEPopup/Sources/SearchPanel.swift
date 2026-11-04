@@ -1280,7 +1280,8 @@ final class SearchModel: ObservableObject {
     }
 
     var canReuse: Bool {
-        !showingTrash && reuseTarget() != nil && !reusePhase.isActive
+        guard !showingTrash, let file = reuseTarget() else { return false }
+        return !reusePhase.isActive || file.path != reuseAnchor
     }
 
     func startReuse() {
@@ -1292,6 +1293,7 @@ final class SearchModel: ObservableObject {
             file = reuseTarget()
         }
         guard let file else { return }
+        let timing = file.ext == "md" ? ReuseTiming() : nil
         FilePreview.shared.close()
         reuseTask?.cancel()
         reuseOther = ""
@@ -1306,6 +1308,7 @@ final class SearchModel: ObservableObject {
         ReuseFeedback.begin(file)
         if !GroqRerank.hasKey {
             reusePhase = .failed("先在右上角「API 设置」粘贴 OpenRouter API Key")
+            timing?.record("ui_update", status: "failure")
             return
         }
         reusePhase = .proposing
@@ -1324,8 +1327,11 @@ final class SearchModel: ObservableObject {
                 return
             }
             if TextReuse.shouldHandle(snapshot) {
-                let ask = await TextReuse.inspect(file: snapshot)
-                guard !Task.isCancelled else { return }
+                let ask = await TextReuse.inspect(file: snapshot, timing: timing)
+                guard !Task.isCancelled else {
+                    timing?.record("cancelled", status: "cancelled")
+                    return
+                }
                 if let ask {
                     reusePicks = [:]
                     noteCloudUpload([snapshot.path])
@@ -1333,22 +1339,27 @@ final class SearchModel: ObservableObject {
                 } else {
                     reusePhase = .failed(GroqClient.lastError ?? "看不出这篇能怎么补")
                 }
+                timing?.record("ui_update", status: ask == nil ? "failure" : "success")
                 return
             }
-            let proposal = await GroqReuse.propose(file: snapshot)
-            guard !Task.isCancelled else { return }
+            let proposal = await GroqReuse.propose(file: snapshot, timing: timing)
+            guard !Task.isCancelled else {
+                timing?.record("cancelled", status: "cancelled")
+                return
+            }
             if let proposal {
                 noteCloudUpload([snapshot.path])
                 reusePhase = .choose(proposal)
             } else {
                 reusePhase = .failed(GroqClient.lastError ?? "没有给出可用方向")
             }
+            timing?.record("ui_update", status: proposal == nil ? "failure" : "success")
         }
     }
 
     func pickReuse(_ option: ReuseOption) {
         guard case .choose(let proposal) = reusePhase else { return }
-        if option.id == "D" {
+        if option.id == GroqReuse.other.id {
             let custom = reuseOther.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !custom.isEmpty else { return }
         }
@@ -1594,6 +1605,19 @@ final class SearchModel: ObservableObject {
     }
 }
 
+private struct MainWindowDragRegion: NSViewRepresentable {
+    final class DragView: NSView {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+    }
+
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
+}
+
 struct SearchPanelView: View {
     @ObservedObject var model: SearchModel
     @ObservedObject private var semantic = SemanticProgress.shared
@@ -1672,13 +1696,18 @@ struct SearchPanelView: View {
                 .help("设置 · 查看本机扫描进度与配置云端功能")
                 .popover(isPresented: $showSettings, arrowEdge: .bottom) {
                     APISettingsView(model: model, progress: indexingProgress, observesProgress: false)
-                        .frame(height: 480)
+                        .frame(height: min(520, ((NSApp.keyWindow?.screen ?? NSScreen.main)?.visibleFrame.height ?? 600) - 40))
                         .onExitCommand { showSettings = false }
                 }
             }
             .padding(.horizontal, 18)
             .padding(.top, 16)
             .padding(.bottom, 12)
+            .overlay(alignment: .top) {
+                MainWindowDragRegion()
+                    .frame(height: 14)
+                    .padding(.horizontal, 10)
+            }
 
             Rectangle()
                 .fill(Color.primary.opacity(0.06))
@@ -1740,13 +1769,14 @@ struct SearchPanelView: View {
                         }
                         .disabled(!model.canDismissPickedReuseSuggestions || model.recycleBusy)
                         RecycleActionButton(title: "咔哒一下", symbol: "sparkles") {
-                            if model.reusePhase.isActive {
+                            if model.reusePhase.isActive && !model.canReuse {
                                 AppDelegate.shared.presentReuseWindow()
                             } else {
+                                if model.reusePhase.isActive { model.cancelReuse() }
                                 model.startReuse()
                             }
                         }
-                            .help(model.reusePhase.isActive ? "查看咔哒进度" : "将选中的文件补全或生成新版本")
+                            .help(model.reusePhase.isActive && !model.canReuse ? "查看咔哒进度" : "将选中的文件补全或生成新版本")
                             .disabled((!model.canReuse && !model.reusePhase.isActive) || model.recycleBusy)
                         RecycleActionButton(
                             title: model.recycleBusy ? "正在移入…" : "移入垃圾桶",
@@ -1935,6 +1965,12 @@ private struct RecycleActionButton: View {
     }
 }
 
+extension ReusePhase {
+    var usesCompactReuseWindow: Bool {
+        self == .proposing || isChoosingDirection
+    }
+}
+
 struct ReuseSessionView: View {
     @ObservedObject var model: SearchModel
 
@@ -1943,10 +1979,42 @@ struct ReuseSessionView: View {
         return false
     }
 
+    private var showingWaiting: Bool {
+        if case .writing = model.reusePhase { return true }
+        return model.reusePhase == .proposing
+    }
+
     var body: some View {
+        Group {
+            if model.reusePhase.usesCompactReuseWindow {
+                GeometryReader { geometry in
+                    ScrollView {
+                        content
+                            .frame(minHeight: geometry.size.height, alignment: .top)
+                    }
+                }
+                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                .background(.ultraThinMaterial)
+            } else {
+                content
+                    .frame(
+                        minWidth: showingComparison ? 800 : 480,
+                        idealWidth: showingComparison ? 1040 : 480,
+                        maxWidth: .infinity,
+                        minHeight: showingComparison ? 560 : 540,
+                        idealHeight: showingComparison ? 700 : 540,
+                        maxHeight: .infinity
+                    )
+                    .background(.ultraThinMaterial)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                ReuseFlowMark(active: model.reusePhase.isActive && !showingComparison)
+                ReuseFlowMark(active: model.reusePhase.isActive && !showingComparison && !model.reusePhase.usesCompactReuseWindow && !showingWaiting)
                 Text("咔哒一下")
                     .font(.system(size: 22, weight: .medium))
                 Spacer(minLength: 8)
@@ -1954,8 +2022,13 @@ struct ReuseSessionView: View {
             .padding(.horizontal, 20)
             .padding(.top, 18)
             .padding(.bottom, 10)
+            .overlay(alignment: .top) {
+                MainWindowDragRegion()
+                    .frame(height: 14)
+                    .padding(.horizontal, 10)
+            }
 
-            if model.reusePhase.isActive, !showingComparison {
+            if model.reusePhase.isActive, !showingComparison, !model.reusePhase.usesCompactReuseWindow, !showingWaiting {
                 VStack(alignment: .leading, spacing: 6) {
                     ReuseFlowProgress(value: model.reuseProgress)
                     Text(model.reuseStageLabel)
@@ -1967,11 +2040,17 @@ struct ReuseSessionView: View {
                 .padding(.bottom, 10)
             }
 
-            Rectangle()
-                .fill(Color.primary.opacity(0.06))
-                .frame(height: 1)
+            if !model.reusePhase.usesCompactReuseWindow {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 1)
+            }
+
+            if model.reusePhase == .proposing { Spacer(minLength: 0) }
 
             ReusePanel(model: model)
+
+            if model.reusePhase.usesCompactReuseWindow { Spacer(minLength: 0) }
 
             HStack(spacing: 8) {
                 footer
@@ -1980,15 +2059,6 @@ struct ReuseSessionView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(
-            minWidth: showingComparison ? 800 : 480,
-            idealWidth: showingComparison ? 1040 : 480,
-            maxWidth: .infinity,
-            minHeight: showingComparison ? 560 : 540,
-            idealHeight: showingComparison ? 700 : 540,
-            maxHeight: .infinity
-        )
-        .background(.ultraThinMaterial)
     }
 
     @ViewBuilder
@@ -2017,8 +2087,27 @@ struct ReuseSessionView: View {
                 .foregroundStyle(.secondary)
             Button("取消") { model.cancelReuse() }
                 .buttonStyle(.plain)
+        case .choose(let proposal):
+            Text("原文不变")
+                .foregroundStyle(.tertiary)
+            Spacer()
+            Button("取消") { model.cancelReuse() }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            Button("咔哒一下") {
+                if !model.reuseOther.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    model.pickReuse(GroqReuse.other)
+                } else if let option = proposal.options.first(where: { $0.id == model.reusePicks["direction"] }) {
+                    model.pickReuse(option)
+                }
+            }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    model.reusePicks["direction"] == nil
+                        && model.reuseOther.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
         case .ask:
-            Text("原文不动。补全后放在旁边")
+            Text("原文不变")
                 .foregroundStyle(.tertiary)
             Spacer()
             Button("取消") { model.cancelReuse() }
@@ -2116,6 +2205,34 @@ private struct ReuseFlowProgress: View {
     }
 }
 
+private struct ReuseWaitingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var moving = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let segment = width * 0.22
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.07))
+                Capsule()
+                    .fill(Color.blue)
+                    .frame(width: segment)
+                    .offset(x: reduceMotion ? (width - segment) / 2 : (moving ? width : -segment))
+            }
+            .clipShape(Capsule())
+        }
+        .frame(width: 220, height: 4)
+        .accessibilityHidden(true)
+        .onAppear { moving = true }
+        .onDisappear { moving = false }
+        .animation(
+            reduceMotion ? nil : .linear(duration: 1.5).repeatForever(autoreverses: false),
+            value: moving
+        )
+    }
+}
+
 private struct ReusePanel: View {
     @ObservedObject var model: SearchModel
     @FocusState private var otherFocused: Bool
@@ -2124,9 +2241,11 @@ private struct ReusePanel: View {
         VStack(alignment: .leading, spacing: 0) {
             switch model.reusePhase {
             case .proposing:
-                status("正在看这份材料…")
+                preparingDirections
             case .writing(let title):
-                status(title.hasPrefix("补全") ? "正在补全这张图…" : "正在写：\(title)")
+                waitingMessage(title.hasPrefix("补全") ? "正在补全这张图…" : "正在写：\(title)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(model.fastSearching ? 8 : 24)
             case .failed(let message):
                 status(message)
             case .done:
@@ -2139,7 +2258,31 @@ private struct ReusePanel: View {
                 EmptyView()
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: model.reusePhase.usesCompactReuseWindow ? nil : .infinity)
+    }
+
+    private var preparingDirections: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let path = model.reuseOriginalPath {
+                FileNameLine(name: URL(fileURLWithPath: path).lastPathComponent)
+                    .font(.system(size: 15, weight: .medium))
+            }
+            waitingMessage("正在看这份材料…")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+    }
+
+    private func waitingMessage(_ text: String) -> some View {
+        VStack(spacing: 10) {
+            ReuseWaitingIndicator()
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func status(_ text: String) -> some View {
@@ -2163,17 +2306,24 @@ private struct ReusePanel: View {
                 Text(proposal.brief)
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 18)
             .padding(.top, 16)
             .padding(.bottom, 12)
 
-            ForEach(proposal.options) { option in
-                optionRow(letter: option.id, title: option.title) {
-                    model.pickReuse(option)
+            VStack(spacing: 8) {
+                ForEach(proposal.options) { option in
+                    ReuseChoiceCard(
+                        choice: ImageAskChoice(id: option.id, title: option.title),
+                        selected: model.reusePicks["direction"] == option.id
+                    ) {
+                        model.toggleReuseChoice(option.id)
+                    }
                 }
             }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 12)
             HStack(alignment: .center, spacing: 12) {
                 Text("自定义")
                     .font(.system(size: 13, weight: .semibold))
@@ -2185,14 +2335,20 @@ private struct ReusePanel: View {
                     .focused($otherFocused)
                     .onSubmit { model.pickReuse(GroqReuse.other) }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
-            .background(
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .background(Color.primary.opacity(0.015), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(otherFocused ? Color.primary.opacity(0.05) : Color.clear)
-            )
-            .padding(.horizontal, 8)
-            Spacer(minLength: 0)
+                    .stroke(otherFocused ? Color.blue.opacity(0.3) : Color.primary.opacity(0.07), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .padding(.horizontal, 18)
+            .onChange(of: model.reuseOther) { _, value in
+                if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    model.reusePicks.removeAll()
+                }
+            }
         }
     }
 
@@ -2204,12 +2360,12 @@ private struct ReusePanel: View {
                 Text(ask.diagnosis)
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
-                    .lineLimit(3)
+                    .lineLimit(1)
                 if !ask.anchors.isEmpty {
                     Text("必须用上：\(ask.anchors)")
                         .font(.system(size: 13))
                         .foregroundStyle(.tertiary)
-                        .lineLimit(2)
+                        .lineLimit(1)
                 }
             }
             .padding(.horizontal, 18)
@@ -2233,7 +2389,7 @@ private struct ReusePanel: View {
                 Image(systemName: "pencil.line")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.tertiary)
-                TextField("自定义，例如：保留铅笔质感并轻轻上色", text: $model.reuseOther)
+                TextField("输入自定义方向", text: $model.reuseOther)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14))
                     .focused($otherFocused)
@@ -2241,13 +2397,11 @@ private struct ReusePanel: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 42)
-            .background {
+            .background(Color.primary.opacity(0.015), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.primary.opacity(otherFocused ? 0.055 : 0.035))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.primary.opacity(otherFocused ? 0.14 : 0.07), lineWidth: 1)
-                    }
+                    .stroke(otherFocused ? Color.blue.opacity(0.3) : Color.primary.opacity(0.07), lineWidth: 1)
+                    .allowsHitTesting(false)
             }
             .padding(.horizontal, 18)
             .onChange(of: model.reuseOther) { _, value in
@@ -2255,34 +2409,7 @@ private struct ReusePanel: View {
                     model.reusePicks.removeAll()
                 }
             }
-            Spacer(minLength: 0)
         }
-    }
-
-    private func optionRow(letter: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(alignment: .center, spacing: 12) {
-                Text(letter)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 22, alignment: .leading)
-                Text(title)
-                    .font(.system(size: 16))
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.clear)
-        )
-        .padding(.horizontal, 8)
     }
 }
 
@@ -2290,6 +2417,7 @@ private struct ReuseChoiceCard: View {
     let choice: ImageAskChoice
     let selected: Bool
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
@@ -2301,14 +2429,14 @@ private struct ReuseChoiceCard: View {
                     .font(.system(size: 14, weight: selected ? .medium : .regular))
                     .foregroundStyle(Color.primary)
                     .multilineTextAlignment(.leading)
-                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
             .padding(11)
             .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(selected ? Color.accentColor.opacity(0.09) : Color.primary.opacity(0.035))
+                    .fill(selected ? Color.accentColor.opacity(0.09) : Color.primary.opacity(hovering ? 0.045 : 0.015))
                     .overlay {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .stroke(
@@ -2319,6 +2447,7 @@ private struct ReuseChoiceCard: View {
             }
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 

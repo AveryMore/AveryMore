@@ -26,7 +26,7 @@ struct OnboardingDemoView: View {
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.09)))
-            .accessibilityLabel("AI Everything 界面演示：搜索旅行草稿，用咔哒再利用，并对比原版和新版本。")
+            .accessibilityLabel("Averymore 界面演示：搜索旅行草稿，用咔哒再利用，并对比原版和新版本。")
 
             HStack {
                 Text("8 秒看懂 · 示例资料，流程已缩短")

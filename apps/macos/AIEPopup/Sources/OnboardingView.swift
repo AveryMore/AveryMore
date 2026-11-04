@@ -66,9 +66,9 @@ struct OnboardingView: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 7) {
-                Text("AI Everything")
+                Text("Averymore")
                     .font(.system(size: 28, weight: .semibold))
-                Text("搜索文件，也让旧内容有新的可能。")
+                Text("Find everything. Make more of it.\n找得到，更用得好。")
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
             }
@@ -243,7 +243,7 @@ struct OnboardingView: View {
             Toggle("允许从 iCloud 下载待分析照片", isOn: $photoLibrary.downloadFromICloud)
                 .font(.system(size: 12))
             if setup.selectedFolders.isEmpty {
-                Text("至少选择一个文件夹，或先连接照片图库。AI Everything 只会索引这里列出的来源。")
+                Text("至少选择一个文件夹，或先连接照片图库。Averymore 只会索引这里列出的来源。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -399,8 +399,8 @@ struct OnboardingView: View {
             installStatus
             VStack(alignment: .leading, spacing: 10) {
                 Label("内容索引可能仍在进行，进度可随时查看", systemImage: "arrow.clockwise")
-                Label("右键菜单栏 AIE，查看进度或暂停扫描", systemImage: "menubar.rectangle")
-                Label(shortcut.registered ? "下次按 \(shortcut.selected.title) 打开搜索" : "下次点击菜单栏 AIE 打开搜索", systemImage: "keyboard")
+                Label("右键菜单栏 Averymore，查看进度或暂停扫描", systemImage: "menubar.rectangle")
+                Label(shortcut.registered ? "下次按 \(shortcut.selected.title) 打开搜索" : "下次点击菜单栏 Averymore 打开搜索", systemImage: "keyboard")
             }.font(.system(size: 12)).foregroundStyle(.secondary)
             Text("关闭窗口会收起 Dock 图标；退出应用会停止扫描。")
                 .font(.system(size: 11)).foregroundStyle(.secondary)

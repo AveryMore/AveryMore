@@ -239,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tutorial.target = self
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
-            withTitle: "退出 AI Everything",
+            withTitle: "退出 Averymore",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
@@ -262,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "AIE"
+        item.button?.title = "Averymore"
         item.button?.toolTip = "点击搜索 · 右键打开菜单"
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
@@ -281,7 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "重新打开新手引导…", action: #selector(showOnboarding), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "退出 AI Everything", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "退出 Averymore", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem?.menu = menu
         statusItem?.button?.performClick(nil)
     }
@@ -319,7 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             defer: false,
             screen: screen
         )
-        window.title = "AI Everything"
+        window.title = "Averymore"
         window.level = .floating
         window.sharingType = .readWrite
         window.isReleasedWhenClosed = false
@@ -493,23 +493,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let map: [UInt16: String] = [0: "A", 11: "B", 8: "C", 2: "D"]
             if let letter = map[event.keyCode],
                let option = proposal.options.first(where: { $0.id == letter }) {
-                model.pickReuse(option)
+                model.toggleReuseChoice(option.id)
                 return nil
             }
         }
         return event
     }
 
+    private var reuseDirectionWindowSize: NSSize {
+        let screen = reuseWindow?.screen ?? panel?.screen ?? NSScreen.main
+        return NSSize(width: 480, height: min(458, (screen?.visibleFrame.height ?? 482) - 24))
+    }
+
     func presentReuseWindow() {
         if reuseWindow == nil { setupReuseWindow() }
         guard let reuseWindow else { return }
+        let compact = model.reusePhase.usesCompactReuseWindow
+        reuseWindow.minSize = compact ? reuseDirectionWindowSize : NSSize(width: 480, height: 540)
         let size: NSSize
         if case .done = model.reusePhase {
             size = NSSize(width: 1040, height: 700)
+        } else if compact {
+            size = reuseDirectionWindowSize
         } else {
             size = NSSize(width: 480, height: 540)
         }
-        reuseWindow.setContentSize(size)
+        if !compact || !reuseWindow.isVisible {
+            reuseWindow.setContentSize(size)
+        }
         if !reuseWindow.isVisible {
             var frame = NSRect(x: 80, y: 80, width: size.width, height: size.height)
             if let panel, panel.isVisible {
@@ -543,9 +554,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupReuseWindow() {
+        let size = reuseDirectionWindowSize
         let window = AIEWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 540),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -554,14 +566,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenPrimary]
-        window.minSize = NSSize(width: 480, height: 540)
+        window.minSize = size
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = true
+        window.isMovableByWindowBackground = true
         window.titleVisibility = .hidden
-        // The titled window supplies the outer corners; its content must meet the title bar squarely.
-        let host = NSHostingView(rootView: ReuseSessionView(model: model))
-        host.frame = NSRect(x: 0, y: 0, width: 480, height: 540)
+        let host = ClearHostingView(rootView: ReuseSessionView(model: model))
+        host.frame = NSRect(origin: .zero, size: size)
         host.wantsLayer = true
         host.layer?.isOpaque = false
         host.layer?.backgroundColor = NSColor.clear.cgColor

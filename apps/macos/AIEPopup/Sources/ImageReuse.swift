@@ -50,10 +50,10 @@ enum ImageReuse {
             json: true,
             temperature: 0.3,
             slow: true,
-            model: GroqClient.reuseModel,
+            model: GroqClient.scanModel,
             pinGroq: false,
             allowFallback: true,
-            fallbacks: GroqClient.reuseFallbacks
+            fallbacks: GroqClient.scanFallbacks
         )         else { return nil }
         GroqClient.log("image-ask \(raw.prefix(240))")
         CloudUpload.mark(file, purpose: "reuse.inspect")

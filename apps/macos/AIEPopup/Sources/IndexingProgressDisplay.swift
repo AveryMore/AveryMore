@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AIEData
+import GRDB
 
 /// Presentation only: combines persisted current-version work with the current catalog pass.
 struct IndexingStageCount {
@@ -70,13 +71,30 @@ struct IndexingStageCount {
     }
 
     private func observeSemantics(roots: [String], id: String) async {
+        let changes = await Task.detached(priority: .utility) { () -> DatabaseQueue? in
+            var configuration = Configuration()
+            configuration.readonly = true
+            return try? DatabaseQueue(path: AppDatabase.url.path, configuration: configuration)
+        }.value
+        var lastVersion: Int?
+        var lastRevision: Int?
         while !Task.isCancelled {
             let revision = fileRevision
+            let cachedVersion = lastVersion
+            let cachedRevision = lastRevision
             let result = await Task.detached(priority: .utility) {
-                Result { try AppDatabase.open().indexingSemanticSnapshot(rootPaths: roots) }
+                Result { () -> (Int?, SemanticDisplaySnapshot?) in
+                    let version = try changes?.read { try Int.fetchOne($0, sql: "PRAGMA data_version") }
+                    if let version, version == cachedVersion, revision == cachedRevision { return (version, nil) }
+                    return (version, try AppDatabase.open().indexingSemanticSnapshot(rootPaths: roots))
+                }
             }.value
             guard !Task.isCancelled, requestID == id else { return }
-            if case .success(let value) = result, revision == fileRevision { semanticSnapshot = value }
+            if case .success(let (version, value?)) = result, revision == fileRevision {
+                semanticSnapshot = value
+                lastVersion = version
+                lastRevision = revision
+            }
             do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
         }
     }

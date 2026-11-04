@@ -60,7 +60,7 @@ enum LibraryGateway {
             let excludedPhotos = try database.excludedPhotoPaths(rootPath: PhotoImport.directory.path)
             files.removeAll { excludedPhotos.contains($0.path) }
             for root in roots { try LegacyImport.run(root: root, database: database) }
-            let indexedFiles = Dictionary(grouping: try database.indexedFileMetadata(rootPaths: roots.map(\.path)), by: \.path)
+            let indexedFiles = Dictionary(grouping: try database.indexedFileMetadata(rootPaths: roots.map(\.path), includeInactiveRoots: true), by: \.path)
             var documents: [SourceDocument] = []
             var analyses: [String: [String: Any]] = [:]
             var staged: [SourceDocument] = []

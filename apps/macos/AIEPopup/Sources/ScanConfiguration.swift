@@ -64,10 +64,11 @@ enum ScanConfiguration {
     static let allowIndexGrowthKey = "aie.index.allowBeyondSoftLimit"
     static func semanticEnabled(in defaults: UserDefaults = .standard) -> Bool {
         // Keep the old model-free choice disabled until the user explicitly picks a new plan.
-        defaults.string(forKey: planKey) != "light" && !defaults.bool(forKey: pendingKey)
+        defaults.string(forKey: planKey) != "light"
     }
     static func visionEnabled(in defaults: UserDefaults = .standard) -> Bool {
-        semanticEnabled(in: defaults) && defaults.string(forKey: planKey) != LocalScanPlan.semantic.rawValue
+        semanticEnabled(in: defaults) && !defaults.bool(forKey: pendingKey)
+            && defaults.string(forKey: planKey) != LocalScanPlan.semantic.rawValue
     }
     static func selectedVisionModel(in defaults: UserDefaults = .standard) -> String? {
         defaults.string(forKey: planKey).flatMap(LocalScanPlan.init(rawValue:))?.visionModel

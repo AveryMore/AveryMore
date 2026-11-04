@@ -39,6 +39,13 @@ enum ReusePhase: Equatable {
         return true
     }
 
+    var isChoosingDirection: Bool {
+        switch self {
+        case .ask, .choose: return true
+        default: return false
+        }
+    }
+
     var progress: Double {
         switch self {
         case .idle, .failed: return 0
@@ -63,11 +70,41 @@ enum ReusePhase: Equatable {
     }
 }
 
+final class ReuseTiming {
+    private let id = UUID().uuidString
+    private let started = DispatchTime.now().uptimeNanoseconds
+    private var previous: UInt64
+    private var actualModel = "unknown"
+    var requestedModel = "unknown"
+
+    init?() {
+        guard ProcessInfo.processInfo.environment["AIE_DEBUG_LOGS"] == "1" else { return nil }
+        previous = started
+    }
+
+    func recordModel(_ model: String) {
+        actualModel = model
+    }
+
+    func record(_ stage: String, status: String = "completed", operationStarted: UInt64? = nil) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let interval = Double(now - previous) / 1_000_000
+        let total = Double(now - started) / 1_000_000
+        previous = now
+        var line = String(format: "reuse-timing id=%@ stage=%@ status=%@ requested_model=%@ actual_model=%@ interval_ms=%.3f total_ms=%.3f",
+                          id, stage, status, requestedModel, actualModel, interval, total)
+        if let operationStarted {
+            line += String(format: " operation_ms=%.3f", Double(now - operationStarted) / 1_000_000)
+        }
+        GroqClient.log(line)
+    }
+}
+
 enum GroqReuse {
     static let other = ReuseOption(id: "custom", title: "自定义")
 
-    static func propose(file: IndexedFile) async -> ReuseProposal? {
-        let material = material(for: file)
+    static func propose(file: IndexedFile, timing: ReuseTiming? = nil) async -> ReuseProposal? {
+        let material = material(for: file, timing: timing)
         let lowerName = file.name.lowercased()
         let namedIncomplete = ["未完成", "未写完", "没画完", "半成品", "续写"]
             .contains(where: lowerName.contains)
@@ -88,21 +125,30 @@ enum GroqReuse {
         材料：
         \(material)
         """
-        guard let raw = await GroqClient.complete(
+        timing?.record("prompt_ready")
+        let model = GroqClient.scanModel
+        timing?.requestedModel = model
+        timing?.record("cloud_request_start", status: "started")
+        let raw = await GroqClient.complete(
             system: "你给本地文件提供再利用方向。只输出 JSON。",
             user: prompt,
             maxTokens: 420,
             json: true,
             temperature: 0.4,
             slow: true,
-            model: GroqClient.reuseModel,
+            model: model,
             pinGroq: false,
             allowFallback: true,
-            fallbacks: GroqClient.reuseFallbacks
-        )         else { return nil }
-        GroqClient.log("reuse-propose \(raw.prefix(240))")
+            fallbacks: GroqClient.scanFallbacks,
+            onModel: timing?.recordModel
+        )
+        timing?.record("cloud_response_complete", status: raw == nil ? "failure" : "success")
+        guard let raw else { return nil }
+        if file.ext != "md" { GroqClient.log("reuse-propose \(raw.prefix(240))") }
         CloudUpload.mark(file, purpose: "reuse.propose")
+        let parseStarted = timing.map { _ in DispatchTime.now().uptimeNanoseconds }
         let parsed = parseProposal(raw, file: file)
+        timing?.record("json_parse_complete", operationStarted: parseStarted)
         return parsed
     }
 
@@ -235,14 +281,16 @@ enum GroqReuse {
         }
     }
 
-    private static func material(for file: IndexedFile) -> String {
+    private static func material(for file: IndexedFile, timing: ReuseTiming? = nil) -> String {
         var parts = [
             "文件名：\(file.name)",
             "路径：\(file.relative)",
             "类型：\(file.kind.rawValue)",
         ]
         if !file.llmCard.isEmpty { parts.append("摘要：\(file.llmCard)") }
+        let readStarted = timing.map { _ in DispatchTime.now().uptimeNanoseconds }
         let body = extractBody(file)
+        timing?.record("local_read_complete", operationStarted: readStarted)
         if !body.isEmpty { parts.append("正文摘录：\n\(body)") }
         return parts.joined(separator: "\n")
     }

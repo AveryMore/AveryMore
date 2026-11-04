@@ -30,6 +30,7 @@ struct DeepScanIndexReport: Codable {
     static let shared = SemanticProgress()
     @Published var text = "语义索引待检查"
     @Published var revision = 0
+    @Published fileprivate(set) var isIndexing = false
     @Published var phase: Phase = .checking
     @Published var ready = 0
     @Published var total = 0
@@ -42,12 +43,21 @@ actor LocalSemanticIndex {
     static let shared = LocalSemanticIndex()
     static let usesGemma = true
     private var roots: [String] = []
-    private var job: Task<Void, Never>?
+    private var job: Task<Void, Never>? {
+        didSet {
+            let isIndexing = job != nil
+            DispatchQueue.main.async {
+                SemanticProgress.shared.isIndexing = isIndexing
+            }
+        }
+    }
     private var generation = 0
     private var updateRequested = false
     private var digest: String?
     private var queryCache: [String: [Float]] = [:]
     private var retryAfter = Date.distantPast
+    private var deepScanRevision = 0
+    private var deepScanInFlight = Set<String>()
     private static let indexedSemanticMethods = [
         "file_summary",
         "local_multimodal_deep_scan",
@@ -79,6 +89,7 @@ actor LocalSemanticIndex {
             && (visual == nil || visual!.ready == visual!.total)
     }
     func update(roots requested: [String], force: Bool = false) {
+        deepScanRevision += 1
         let requested = requested.sorted()
         if roots != requested {
             generation += 1; job?.cancel(); job = nil; roots = requested
@@ -187,8 +198,27 @@ actor LocalSemanticIndex {
                     progress.phase = coverage.ready == coverage.total ? .complete : .running
                 }
                 if coverage.ready == coverage.total {
-                    if !ScanControl.shared.isPaused {
-                        _ = try await indexDeepScan(roots: requested, background: true)
+                    // The existing 8B completion callback reloads projections before waking this job.
+                    // Keep DeepScan outside the four-stage V1 counts and give V1 work first priority.
+                    if !ScanControl.shared.isPaused, BackgroundResourcePolicy.pauseReason == nil {
+                        let revision = deepScanRevision
+                        do {
+                            let report = try await indexDeepScan(roots: snapshot, background: true)
+                            guard current == generation, !Task.isCancelled else { return }
+                            if report.generated + report.reused > 0 || revision != deepScanRevision { continue }
+                            if report.total > report.skipped, !deepScanInFlight.isEmpty {
+                                try await Task.sleep(nanoseconds: 200_000_000)
+                                continue
+                            }
+                            if !report.failures.isEmpty { AppLog.write("deepscan-index: \(report.failures.count) failed") }
+                        } catch is CancellationError { return }
+                        catch let error as URLError where error.code == .cancelled {
+                            guard current == generation, !Task.isCancelled else { return }
+                            try await Task.sleep(nanoseconds: 200_000_000)
+                            continue
+                        } catch {
+                            AppLog.write("deepscan-index: \(error)")
+                        }
                     }
                     await MainActor.run { SemanticProgress.shared.revision += 1 }
                     return
@@ -367,55 +397,90 @@ actor LocalSemanticIndex {
         try await ensureModel()
     }
 
-    /// Separate summary channel, incrementally filled after ready V1 work. Never part of V1 recall.
+    /// Reused by diagnostics and by the existing index job after V1 work has settled.
     func indexDeepScan(roots requested: [String], background: Bool = false) async throws -> DeepScanIndexReport {
+        let current = generation
+        func checkContext() throws {
+            try Task.checkCancellation()
+            guard current == generation else { throw CancellationError() }
+        }
+        func yieldForForegroundWork() throws {
+            try checkContext()
+            if background && (ScanControl.shared.isPaused || ScanControl.shared.isInteractiveWorkActive
+                || ScanControl.shared.isHeavyModelActive || BackgroundResourcePolicy.pauseReason != nil) {
+                throw URLError(.cancelled)
+            }
+        }
+        try yieldForForegroundWork()
         guard LocalGemmaWorker.isAvailable else { throw GemmaError.notInstalled }
         let revision = try await LocalGemmaWorker.shared.revision()
+        try checkContext()
         let deepSpace = "gemma2:" + revision + ":deepscan-summary-v1"
         let db = try AppDatabase.open()
-        let inputs = try db.deepScanEmbeddingInputs(
-            spaceID: deepSpace, legacySpaceID: "gemma2:" + revision + ":understanding-v1",
-            modelID: LocalGemmaWorker.modelID, modelVersion: revision,
-            dimensions: LocalGemmaWorker.dimensions, rootPaths: requested)
+        func loadInputs() async throws -> [(chunk: ChunkResult, vector: [Float]?, indexed: Bool)] {
+            try await Task.detached(priority: .utility) {
+                try db.deepScanEmbeddingInputs(
+                    spaceID: deepSpace, legacySpaceID: "gemma2:" + revision + ":understanding-v1",
+                    modelID: LocalGemmaWorker.modelID, modelVersion: revision,
+                    dimensions: LocalGemmaWorker.dimensions, rootPaths: requested)
+            }.value
+        }
+        let inputs = try await loadInputs()
+        try checkContext()
+        func key(_ chunk: ChunkResult) -> String { deepSpace + ":" + chunk.id + ":" + chunk.contentHash }
+        let pending = inputs.filter { !$0.indexed && !deepScanInFlight.contains(key($0.chunk)) }
+        let claimed = Array(pending.prefix(background ? 4 : pending.count))
+        for input in claimed { deepScanInFlight.insert(key(input.chunk)) }
+        defer { for input in claimed { deepScanInFlight.remove(key(input.chunk)) } }
         var generated = 0
         var reused = 0
         var failures: [String] = []
+        var fresh = Dictionary(uniqueKeysWithValues: inputs.filter { !$0.indexed }.map { ($0.chunk.id, $0.chunk) })
+        func refreshInputs() async throws {
+            let latest = try await loadInputs()
+            try checkContext()
+            fresh = Dictionary(uniqueKeysWithValues: latest.filter { !$0.indexed }.map { ($0.chunk.id, $0.chunk) })
+        }
+        func isCurrent(_ chunk: ChunkResult) -> Bool {
+            guard let latest = fresh[chunk.id] else { return false }
+            return latest.versionID == chunk.versionID && latest.contentHash == chunk.contentHash
+                && FileManager.default.fileExists(atPath: chunk.path)
+        }
         func store(_ chunk: ChunkResult, _ vector: [Float]) throws {
+            try checkContext()
+            guard isCurrent(chunk) else { throw DataLayerError.staleVersion }
             try db.putEmbedding(chunkID: chunk.id, spaceID: deepSpace,
                                 modelID: LocalGemmaWorker.modelID, modelVersion: revision,
                                 vector: vector, rootPaths: requested, expectedContentHash: chunk.contentHash)
         }
         // understanding-v1 used this same document summary + tags prompt, model and content hash.
-        for input in inputs where !input.indexed && input.vector != nil {
-            try Task.checkCancellation()
+        if !claimed.isEmpty { try await refreshInputs() }
+        for input in claimed where input.vector != nil {
+            try yieldForForegroundWork()
             do { try store(input.chunk, input.vector!); reused += 1 }
+            catch is CancellationError { throw CancellationError() }
             catch { failures.append(input.chunk.path + ": " + String(describing: error)) }
         }
-        let missing = inputs.filter { !$0.indexed && $0.vector == nil }
+        let missing = claimed.filter { $0.vector == nil }
         for offset in stride(from: 0, to: missing.count, by: 4) {
-            try Task.checkCancellation()
-            while background && (ScanControl.shared.isInteractiveWorkActive || ScanControl.shared.isHeavyModelActive) {
-                try await Task.sleep(nanoseconds: 200_000_000)
-            }
-            if background && ScanControl.shared.isPaused { return DeepScanIndexReport(
-                space: deepSpace, total: inputs.count, generated: generated, reused: reused,
-                skipped: inputs.filter(\.indexed).count, failures: failures) }
-            let batch = Array(missing[offset..<min(offset + 4, missing.count)])
+            try yieldForForegroundWork()
+            try await refreshInputs()
+            let batch = missing[offset..<min(offset + 4, missing.count)].filter { isCurrent($0.chunk) }
+            guard !batch.isEmpty else { continue }
             let texts = batch.map { input in
                 let evidence = ([input.chunk.summary] + input.chunk.tags).filter { !$0.isEmpty }
                 return "title: none | text: " + String(evidence.joined(separator: "\n").prefix(2400))
             }
             do {
                 let vectors = try await LocalGemmaWorker.shared.text(texts, background: background)
+                try await refreshInputs()
                 for (input, vector) in zip(batch, vectors) {
                     do { try store(input.chunk, vector); generated += 1 }
+                    catch is CancellationError { throw CancellationError() }
                     catch { failures.append(input.chunk.path + ": " + String(describing: error)) }
                 }
             } catch is CancellationError { throw CancellationError() }
-            catch let error as URLError where background && error.code == .cancelled {
-                updateRequested = true
-                throw CancellationError()
-            }
+            catch let error as URLError where background && error.code == .cancelled { throw error }
             catch {
                 failures += batch.map { $0.chunk.path + ": " + String(describing: error) }
             }

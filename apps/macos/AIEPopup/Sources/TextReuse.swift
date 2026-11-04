@@ -16,8 +16,11 @@ enum TextReuse {
             && !file.completionEvidence.isEmpty
     }
 
-    static func inspect(file: IndexedFile) async -> ImageAsk? {
+    static func inspect(file: IndexedFile, timing: ReuseTiming? = nil) async -> ImageAsk? {
+        let readStarted = timing.map { _ in DispatchTime.now().uptimeNanoseconds }
         let body = DraftText.body(file)
+        timing?.record("local_read_complete", status: body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "failure" : "success",
+                       operationStarted: readStarted)
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             GroqClient.lastError = "这篇几乎是空的"
             return nil
@@ -33,27 +36,37 @@ enum TextReuse {
         正文：
         \(body)
         """
-        guard let raw = await GroqClient.complete(
+        timing?.record("prompt_ready")
+        let model = GroqClient.scanModel
+        timing?.requestedModel = model
+        timing?.record("cloud_request_start", status: "started")
+        let raw = await GroqClient.complete(
             system: "你给写了一半的文稿做补全前问诊。只输出 JSON。选项必须从原文长出来。",
             user: prompt,
             maxTokens: 700,
             json: true,
             temperature: 0.3,
             slow: true,
-            model: GroqClient.reuseModel,
+            model: model,
             pinGroq: false,
             allowFallback: true,
-            fallbacks: GroqClient.reuseFallbacks
-        )         else { return nil }
-        GroqClient.log("text-ask \(raw.prefix(240))")
+            fallbacks: GroqClient.scanFallbacks,
+            onModel: timing?.recordModel
+        )
+        timing?.record("cloud_response_complete", status: raw == nil ? "failure" : "success")
+        guard let raw else { return nil }
+        if file.ext != "md" { GroqClient.log("text-ask \(raw.prefix(240))") }
         CloudUpload.mark(file, purpose: "reuse.inspect")
-        return ImageReuse.parseAsk(
+        let parseStarted = timing.map { _ in DispatchTime.now().uptimeNanoseconds }
+        let parsed = ImageReuse.parseAsk(
             raw,
             file: file,
             fallbackDiagnosis: fallbackDiagnosis(for: file, body: body),
             fallbackAnchors: clip(body, 120),
             fallbackChoices: fallbackChoices(for: file, body: body)
         )
+        timing?.record("json_parse_complete", operationStarted: parseStarted)
+        return parsed
     }
 
     static func complete(

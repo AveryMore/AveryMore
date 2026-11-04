@@ -15,12 +15,12 @@ STAGE="$(mktemp -d "$ROOT/build/.stage.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 APP="$STAGE/AI Everything.app"
 BIN="$APP/Contents/MacOS/AIEPopup"
-SDK="$(xcrun --show-sdk-path)"
+SDK="${AIE_SDK:-$(xcrun --show-sdk-path)}"
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 PROJECT="$(cd "$ROOT/../../.." && pwd)"
-bash "$PROJECT/tools/swift_package.sh" build --product AIEPopup -c release --arch "$ARCH" -j 4 \
+bash "$PROJECT/tools/swift_package.sh" build --product AIEPopup -c release --arch "$ARCH" -j 4 --sdk "$SDK" \
   -Xswiftc -file-prefix-map -Xswiftc "$PROJECT=/AI-Everything" \
   -Xswiftc -debug-prefix-map -Xswiftc "$PROJECT=/AI-Everything"
 SPM_OUT="$(bash "$PROJECT/tools/swift_package.sh" build -c release --arch "$ARCH" --show-bin-path)"
@@ -53,7 +53,12 @@ cp "$GEMMA_MODELS_SOURCE/embeddinggemma-2-Q8_0.gguf" "$APP/Contents/Resources/Ge
 cp "$GEMMA_MODELS_SOURCE/mmproj-embeddinggemma-2-Q8_0.gguf" "$APP/Contents/Resources/GemmaModels/"
 cp "$ROOT/Resources/EmbeddingGemma2-SOURCE.txt" "$APP/Contents/Resources/GemmaModels/"
 cp "$ROOT/Resources/EmbeddingGemma2-APACHE-2.0.txt" "$APP/Contents/Resources/GemmaModels/"
-bash "$PROJECT/tools/build_gemma_runtime.sh" "$APP/Contents/Resources/GemmaRuntime"
+if [ -n "${AIE_GEMMA_RUNTIME_SOURCE:-}" ]; then
+  test "$(cat "$AIE_GEMMA_RUNTIME_SOURCE/llama.cpp-REVISION.txt")" = d8d92973c8c21bb4dd5d592f0fec26fe2cd1e654
+  ditto --noextattr --norsrc "$AIE_GEMMA_RUNTIME_SOURCE" "$APP/Contents/Resources/GemmaRuntime"
+else
+  bash "$PROJECT/tools/build_gemma_runtime.sh" "$APP/Contents/Resources/GemmaRuntime"
+fi
 python3 "$PROJECT/tools/build_bge_runtime.py" "$APP/Contents/Resources/BGERuntime"
 cp "$ROOT/Resources/OnboardingDemo-"*.mp4 "$ROOT/Resources/OnboardingDemo-"*.png "$APP/Contents/Resources/"
 cp "$PROJECT/tools/setup_local_quickscan.sh" "$APP/Contents/Resources/"

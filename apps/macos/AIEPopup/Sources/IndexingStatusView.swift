@@ -103,8 +103,9 @@ struct IndexingStatusView: View {
         scan.indexing || scan.running || (semanticMatches && semantic.phase == .running)
     }
     private var issues: [ScanIssueDisplay] {
-        records.flatMap { file in
-            (["local"] + (deepEnabled ? [deepStage] : [])).compactMap { stage in
+        let stages = ["local"] + (deepEnabled ? [deepStage] : [])
+        return records.flatMap { file in
+            stages.compactMap { stage in
                 let result = file.stages[stage]
                 let skipped = file.deferred || result?.status == "unsupported"
                 let failed = result.map { ["failed", "empty", "limited", "needs_review"].contains($0.status) } ?? false
@@ -273,11 +274,11 @@ struct IndexingStatusView: View {
         let upstream = parsingPending || !progress.count("local", discovered: discovered).settled
             || (deepEnabled && !UserDefaults.standard.bool(forKey: ScanConfiguration.deepPausedKey) && !progress.count(deepStage, discovered: discovered).settled)
         let enabled = ScanConfiguration.semanticEnabled()
-        let status = enabled ? count.status(upstreamPending: upstream, paused: scan.userPaused, loaded: semanticLoaded) : "未启用"
+        let status = enabled ? count.status(upstreamPending: false, paused: scan.userPaused, loaded: semanticLoaded) : "未启用"
         let detail = enabled ? (semanticLoaded ? "Gemma 向量 \(count.ready) / \(count.total) · 待完成 \(count.pending)"
             + (upstream ? "；上游仍在产生内容，分母会增长" : "；已完成部分可按含义搜索") : "正在统计 Gemma 向量目标") : "全文搜索照常可用"
         return IndexingStageDisplay(id: "semantic", title: "语义索引", symbol: "point.3.connected.trianglepath.dotted",
-            detail: detail, status: status, fraction: enabled && semanticLoaded && count.total > 0 ? (upstream ? min(0.99, count.fraction) : count.fraction) : nil,
+            detail: detail, status: status, fraction: enabled && semanticLoaded && count.total > 0 ? count.fraction : nil,
             active: enabled && count.running && !scan.userPaused, attention: enabled && count.failed > 0)
     }
 

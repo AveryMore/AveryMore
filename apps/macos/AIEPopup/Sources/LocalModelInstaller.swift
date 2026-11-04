@@ -19,7 +19,7 @@ enum LocalModelInstaller {
         var errorDescription: String? {
             switch self {
             case .runtimeScriptMissing:
-                return "安装程序不完整，缺少本机运行环境脚本，请重新安装 AI Everything。"
+                return "安装程序不完整，缺少本机运行环境脚本，请重新安装 Averymore。"
             case .runtimeInstallFailed(let reason):
                 return "本机运行环境安装失败：\(reason)"
             case .runtimeUnavailable:

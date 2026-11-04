@@ -66,7 +66,7 @@ enum MediaExternalOpener {
         // Do not silently claim an external jump succeeded after automation was denied.
         let alert = NSAlert()
         alert.messageText = "播放器未能跳到命中位置"
-        alert.informativeText = "可能未获得控制播放器的权限。你可以在 AI Everything 中从 \(MediaOpenPolicy.clock(seconds)) 播放，或打开原文件自行定位。"
+        alert.informativeText = "可能未获得控制播放器的权限。你可以在 Averymore 中从 \(MediaOpenPolicy.clock(seconds)) 播放，或打开原文件自行定位。"
         alert.addButton(withTitle: "在应用内播放")
         alert.addButton(withTitle: "打开原文件")
         alert.addButton(withTitle: "取消")

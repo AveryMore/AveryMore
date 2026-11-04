@@ -92,6 +92,7 @@ enum GroqClient {
         pinGroq: Bool = true,
         allowFallback: Bool = false,
         fallbacks: [String] = [],
+        onModel: ((String) -> Void)? = nil,
         onResponse: (@MainActor () -> Void)? = nil
     ) async -> String? {
         lastError = nil
@@ -186,6 +187,7 @@ enum GroqClient {
             }
             if let content = message["content"] as? String {
                 let modelUsed = (obj["model"] as? String) ?? model
+                onModel?((obj["model"] as? String) ?? "unknown")
                 let reason = (choices.first?["finish_reason"] as? String) ?? ""
                 log("complete \(modelUsed) finish=\(reason) chars=\(content.count)")
                 return content
@@ -194,6 +196,7 @@ enum GroqClient {
                 let text = parts.compactMap { $0["text"] as? String }.joined()
                 if !text.isEmpty {
                     let modelUsed = (obj["model"] as? String) ?? model
+                    onModel?((obj["model"] as? String) ?? "unknown")
                     let reason = (choices.first?["finish_reason"] as? String) ?? ""
                     log("complete \(modelUsed) finish=\(reason) chars=\(text.count)")
                     return text
