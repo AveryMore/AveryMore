@@ -211,9 +211,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setupMainMenu() {
         let main = NSMenu()
-        let appItem = NSMenuItem()
+        let appItem = NSMenuItem(title: "AveryMore", action: nil, keyEquivalent: "")
         main.addItem(appItem)
-        let appMenu = NSMenu()
+        let appMenu = NSMenu(title: "AveryMore")
         let show = NSMenuItem(
             title: "显示搜索窗口",
             action: #selector(showPanel),
@@ -239,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tutorial.target = self
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(
-            withTitle: "退出 Averymore",
+            withTitle: "退出 AveryMore",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
@@ -262,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "Averymore"
+        item.button?.title = "AveryMore"
         item.button?.toolTip = "点击搜索 · 右键打开菜单"
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
@@ -281,7 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "重新打开新手引导…", action: #selector(showOnboarding), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "退出 Averymore", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: "退出 AveryMore", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem?.menu = menu
         statusItem?.button?.performClick(nil)
     }
@@ -319,7 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             defer: false,
             screen: screen
         )
-        window.title = "Averymore"
+        window.title = "AveryMore"
         window.level = .floating
         window.sharingType = .readWrite
         window.isReleasedWhenClosed = false

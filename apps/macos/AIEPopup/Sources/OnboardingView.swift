@@ -66,7 +66,7 @@ struct OnboardingView: View {
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 7) {
-                Text("Averymore")
+                Text("AveryMore")
                     .font(.system(size: 28, weight: .semibold))
                 Text("Find everything. Make more of it.\n找得到，更用得好。")
                     .font(.system(size: 15))
@@ -243,7 +243,7 @@ struct OnboardingView: View {
             Toggle("允许从 iCloud 下载待分析照片", isOn: $photoLibrary.downloadFromICloud)
                 .font(.system(size: 12))
             if setup.selectedFolders.isEmpty {
-                Text("至少选择一个文件夹，或先连接照片图库。Averymore 只会索引这里列出的来源。")
+                Text("至少选择一个文件夹，或先连接照片图库。AveryMore 只会索引这里列出的来源。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -338,7 +338,7 @@ struct OnboardingView: View {
                 usageRow("↑ ↓ 选择 · ↩ 打开", "选中结果后打开；PDF 和视频优先定位到命中位置")
                 usageRow("空格 · ⌘ ↩", "查看选中内容 · 在访达中显示原文件")
                 usageRow("输入框内 ↩", "确认当前搜索；DeepScan 与 BGE 在本机继续整理")
-                usageRow("Esc", "收起搜索；点击菜单栏 AIE 可再次打开")
+                usageRow("Esc", "收起搜索；点击菜单栏 AveryMore 可再次打开")
             }
             Divider()
             LaunchAtLoginToggle()
@@ -399,8 +399,8 @@ struct OnboardingView: View {
             installStatus
             VStack(alignment: .leading, spacing: 10) {
                 Label("内容索引可能仍在进行，进度可随时查看", systemImage: "arrow.clockwise")
-                Label("右键菜单栏 Averymore，查看进度或暂停扫描", systemImage: "menubar.rectangle")
-                Label(shortcut.registered ? "下次按 \(shortcut.selected.title) 打开搜索" : "下次点击菜单栏 Averymore 打开搜索", systemImage: "keyboard")
+                Label("右键菜单栏 AveryMore，查看进度或暂停扫描", systemImage: "menubar.rectangle")
+                Label(shortcut.registered ? "下次按 \(shortcut.selected.title) 打开搜索" : "下次点击菜单栏 AveryMore 打开搜索", systemImage: "keyboard")
             }.font(.system(size: 12)).foregroundStyle(.secondary)
             Text("关闭窗口会收起 Dock 图标；退出应用会停止扫描。")
                 .font(.system(size: 11)).foregroundStyle(.secondary)

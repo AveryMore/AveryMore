@@ -8,7 +8,7 @@ AIE_MODEL="${AIE_QUICKSCAN_MODEL:-qwen3-vl:8b-instruct-q4_K_M}"
 case "$AIE_MODEL" in
   qwen3-vl:2b-instruct-q4_K_M) AIE_DIGEST="ea422f1e73652a95479954d8572d3c8c6022f628ce2d38a1a04aae1b7f2d5300" ;;
   qwen3-vl:4b-instruct-q4_K_M) AIE_DIGEST="ee4b975b58c17ce268cd19d40db35d5edc64603035d2ffc1fee1968eb0947f7b" ;;
-  qwen3-vl:8b-instruct-q4_K_M) AIE_DIGEST="0533d74300e4f9bc367d675d4e64ffd073d50ff16a2b4096cc2e8a1cf8c96319" ;;
+  qwen3-vl:8b-instruct-q4_K_M) AIE_DIGEST="70e58e37beb15464e19aa903dedb2cba828b89c0fb186f75ff2738c7347b96eb" ;;
   *) echo "Unsupported local scan model: $AIE_MODEL" >&2; exit 2 ;;
 esac
 AIE_ENDPOINT="http://127.0.0.1:11435"

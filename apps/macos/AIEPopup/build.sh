@@ -13,7 +13,7 @@ fi
 mkdir -p "$ROOT/build/ModuleCache"
 STAGE="$(mktemp -d "$ROOT/build/.stage.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
-APP="$STAGE/AI Everything.app"
+APP="$STAGE/AveryMore.app"
 BIN="$APP/Contents/MacOS/AIEPopup"
 SDK="${AIE_SDK:-$(xcrun --show-sdk-path)}"
 
@@ -98,7 +98,7 @@ else
   codesign --force --sign - "$APP" >/dev/null
 fi
 codesign --verify --deep --strict "$APP"
-DEST="$ROOT/build/AI Everything.app"
+DEST="$ROOT/build/AveryMore.app"
 rm -rf "$DEST"
 mv "$APP" "$DEST"
 echo "built ($ARCH): $DEST"

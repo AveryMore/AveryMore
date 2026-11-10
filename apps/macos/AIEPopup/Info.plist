@@ -9,9 +9,9 @@
   <key>CFBundleIdentifier</key>
   <string>local.aieverything.popup</string>
   <key>CFBundleName</key>
-  <string>AI Everything</string>
+  <string>AveryMore</string>
   <key>CFBundleDisplayName</key>
-  <string>AI Everything</string>
+  <string>AveryMore</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundlePackageType</key>
@@ -27,17 +27,17 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSDocumentsFolderUsageDescription</key>
-  <string>AI Everything 需要读取资料库文件夹才能搜索文件。</string>
+  <string>AveryMore 需要读取资料库文件夹才能搜索文件。</string>
   <key>NSDownloadsFolderUsageDescription</key>
   <string>如你把资料库放在下载文件夹，需要访问权限才能搜索。</string>
   <key>NSDesktopFolderUsageDescription</key>
   <string>如你选择桌面上的文件夹作为资料根，需要访问权限才能搜索。</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>AI Everything 在本机识别音轨内容，用于搜索音频文件。</string>
+  <string>AveryMore 在本机识别音轨内容，用于搜索音频文件。</string>
   <key>NSAppleEventsUsageDescription</key>
-  <string>AI Everything 需要控制 Keynote 或 QuickTime Player，将搜索结果打开到对应幻灯片或音视频时间点。</string>
+  <string>AveryMore 需要控制 Keynote 或 QuickTime Player，将搜索结果打开到对应幻灯片或音视频时间点。</string>
   <key>NSPhotoLibraryUsageDescription</key>
-  <string>AI Everything 需要读取你授权的照片，用于在本机建立可搜索的文字与内容索引；不会修改图库原片。</string>
+  <string>AveryMore 需要读取你授权的照片，用于在本机建立可搜索的文字与内容索引；不会修改图库原片。</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

@@ -69,7 +69,7 @@ enum DeviceSetupStep: Int, CaseIterable {
         if PhotoLibrarySync.shared.connected {
             selectedFolders = LibraryRoots.merge(existing: selectedFolders, adding: [PhotoImport.directory])
         }
-        showWindow(title: "Averymore")
+        showWindow(title: "AveryMore")
         refresh()
     }
 
@@ -329,7 +329,7 @@ enum DeviceSetupStep: Int, CaseIterable {
                 // Wait for previous inference to finish before switching or disabling vision.
                 await LocalQuickScan.shared.unload()
                 if LocalSemanticIndex.usesGemma {
-                    installPhase = "正在检查 Averymore 内置 EmbeddingGemma 2…"
+                    installPhase = "正在检查 AveryMore 内置 EmbeddingGemma 2…"
                     try await LocalGemmaInstaller.install()
                 }
                 if !plan.models.isEmpty {

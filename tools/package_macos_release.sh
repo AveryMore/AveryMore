@@ -19,7 +19,7 @@ if [ "${1:-}" = "--check" ]; then
   exit 0
 fi
 bash "$AIE_PROJECT/apps/macos/AIEPopup/build.sh"
-AIE_APP="$AIE_PROJECT/apps/macos/AIEPopup/build/AI Everything.app"
+AIE_APP="$AIE_PROJECT/apps/macos/AIEPopup/build/AveryMore.app"
 AIE_VERSION_VALUE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$AIE_APP/Contents/Info.plist")
 AIE_ARCH_VALUE="${AIE_ARCH:-$(uname -m)}"
 AIE_OUTPUT="$AIE_PROJECT/apps/macos/AIEPopup/build/releases"
@@ -38,7 +38,7 @@ xcrun stapler staple "$AIE_APP"
 xcrun stapler validate "$AIE_APP"
 codesign --verify --deep --strict "$AIE_APP"
 spctl --assess --type execute --verbose=2 "$AIE_APP"
-AIE_ARCHIVE="$AIE_OUTPUT/AI-Everything-$AIE_VERSION_VALUE-$AIE_ARCH_VALUE.zip"
+AIE_ARCHIVE="$AIE_OUTPUT/AveryMore-$AIE_VERSION_VALUE-$AIE_ARCH_VALUE.zip"
 ditto -c -k --keepParent "$AIE_APP" "$AIE_ARCHIVE"
 shasum -a 256 "$AIE_ARCHIVE" > "$AIE_ARCHIVE.sha256"
 cp "$AIE_STAGE/notarization.json" "$AIE_OUTPUT/last-notarization.json"
